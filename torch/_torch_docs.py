@@ -8121,6 +8121,7 @@ Args:
 Keyword args:
     correction (int): difference between the sample size and sample degrees of freedom.
                       Defaults to Bessel's correction, ``correction = 1``.
+      .. deprecated:: The default correction value is deprecated. Pass ``correction=1`` explicitly instead.
     {keepdim}
     {out}
 
@@ -8200,6 +8201,7 @@ Args:
 Keyword args:
     correction (int): difference between the sample size and sample degrees of freedom.
                       Defaults to Bessel's correction, ``correction = 1``.
+      .. deprecated:: The default correction value is deprecated. Pass ``correction=1`` explicitly instead.
     {keepdim}
     {out}
 
@@ -9435,6 +9437,7 @@ Args:
 Keyword args:
     correction (int): difference between the sample size and sample degrees of freedom.
                       Defaults to Bessel's correction, ``correction = 1``.
+      .. deprecated:: The default correction value is deprecated. Pass ``correction=1`` explicitly instead.
     {keepdim}
     {out}
 
@@ -9512,6 +9515,7 @@ Args:
 Keyword args:
     correction (int): difference between the sample size and sample degrees of freedom.
                       Defaults to Bessel's correction, ``correction = 1``.
+      .. deprecated:: The default correction value is deprecated. Pass ``correction=1`` explicitly instead.
     {keepdim}
     {out}
 
