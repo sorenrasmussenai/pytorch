@@ -4013,7 +4013,7 @@ class TestAutograd(TestCase):
             # even if raise_exception=False)
             x = torch.ones(1, dtype=torch.float64, requires_grad=True)
             x = x.expand((2, 2))
-            with self.assertRaisesRegex(RuntimeError, 'The 0th input has a dimension with stride 0'):
+            with self.assertRaisesRegex(ValueError, 'The 0th input has a dimension with stride 0'):
                 gradcheck(lambda x: x, (x,), raise_exception=False, fast_mode=fast_mode)
         check(fast_mode=True)
         check(fast_mode=False)
@@ -4277,6 +4277,30 @@ class TestAutograd(TestCase):
         with self.assertWarnsRegex(UserWarning, "get_analytical_jacobian was part of PyTorch's private API"):
             jacobians, reentrant, correct_grad_sizes, correct_grad_types = get_analytical_jacobian((a,), outputs)
         self.assertFalse(reentrant)
+
+    def test_gradcheck_custom_error(self):
+        from torch.autograd.gradcheck import GradcheckError
+
+        def check(fast_mode):
+            def fn(x):
+                y = x.clone()
+                y.register_hook(lambda x: x + 1e-2)
+                return y
+            x = torch.ones(2, 2, requires_grad=True)
+            with self.assertRaisesRegex(GradcheckError, 'Jacobian mismatch for output 0 with respect to input 0'):
+                gradcheck(fn, (x,), fast_mode=fast_mode)
+            with self.assertRaisesRegex(RuntimeError, 'Jacobian mismatch for output 0 with respect to input 0'):
+                gradcheck(fn, (x,), fast_mode=fast_mode)
+            self.assertFalse(gradcheck(fn, (x,), raise_exception=False, fast_mode=fast_mode))
+
+            def fn2(x):
+                raise RuntimeError("Not a GradcheckError!")
+            # Checks that when raise_exception=False, non-GradcheckErrors are not caught by gradcheck
+            with self.assertRaisesRegex(RuntimeError, "Not a GradcheckError!"):
+                gradcheck(fn2, (x,), fast_mode=fast_mode, raise_exception=False)
+
+        check(fast_mode=True)
+        check(fast_mode=False)
 
     def test_version_counter(self):
         x = torch.randn(1, 2)
