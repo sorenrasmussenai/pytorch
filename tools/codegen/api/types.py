@@ -29,6 +29,7 @@ class BaseCppType:
 
 # The set of all non-templated, valid, fully-qualified names of C++ types that are used in the codegen.
 # Templated types get their own dataclass, mainly to make namespace parsing easier.
+# TODO: before merge, give all relevant types the at:: namespace again. Removed temporarily for byte-for-byte testing
 intT = BaseCppType('', 'int64_t')
 doubleT = BaseCppType('', 'double')
 boolT = BaseCppType('', 'bool')
@@ -41,12 +42,12 @@ tensorListT = BaseCppType('at', 'TensorList')
 dimnameT = BaseCppType('at', 'Dimname')
 dimnameListT = BaseCppType('at', 'DimnameList')
 layoutT = BaseCppType('at', 'Layout')
-deviceT = BaseCppType('at', 'Device')
+deviceT = BaseCppType('c10', 'Device')
 scalarT = BaseCppType('at', 'Scalar')
 memoryFormatT = BaseCppType('at', 'MemoryFormat')
 qschemeT = BaseCppType('at', 'QScheme')
 storageT = BaseCppType('at', 'Storage')
-streamT = BaseCppType('at', 'Stream')
+streamT = BaseCppType('', 'Stream')
 intArrayRefT = BaseCppType('at', 'IntArrayRef')
 tensorOptionsT = BaseCppType('at', 'TensorOptions')
 typeAndSizeT = BaseCppType('torch::autograd::generated', 'TypeAndSize')
@@ -76,13 +77,14 @@ BaseTypeToCppMapping: Dict[BaseTy, BaseCppType] = {
 class BaseCType:
     type: BaseCppType
 
-    def cpp_type(self, *, strip_ref: bool = False) -> str:
+    def cpp_type(self, *, strip_ref: bool = False, xla_hack: bool = False) -> str:
         return str(self.type)
 
     # For BC reasons, we don't want to introduce at:: namespaces to RegistrationDeclarations.yaml
     # TODO: Kill this when we eventually remove it!
     def cpp_type_registration_declarations(self) -> str:
-        return str(self.type).replace('at::', '')
+        # TODO: if I'm not keeping c10::Device around in this PR, then kill c10 here.
+        return str(self.type).replace('at::', '').replace('c10::', '')
 
     def remove_const_ref(self) -> 'CType':
         return self
@@ -91,7 +93,7 @@ class BaseCType:
 class ConstRefCType:
     elem: 'CType'
 
-    def cpp_type(self, *, strip_ref: bool = False) -> str:
+    def cpp_type(self, *, strip_ref: bool = False, xla_hack: bool = False) -> str:
         if strip_ref:
             return self.elem.cpp_type(strip_ref=strip_ref)
         return f'const {self.elem.cpp_type()} &'
@@ -106,7 +108,7 @@ class ConstRefCType:
 class MutRefCType:
     elem: 'CType'
 
-    def cpp_type(self, *, strip_ref: bool = False) -> str:
+    def cpp_type(self, *, strip_ref: bool = False, xla_hack: bool = False) -> str:
         if strip_ref:
             return self.elem.cpp_type(strip_ref=strip_ref)
         return f'{self.elem.cpp_type()} &'
@@ -121,7 +123,7 @@ class MutRefCType:
 class OptionalCType:
     elem: 'CType'
 
-    def cpp_type(self, *, strip_ref: bool = False) -> str:
+    def cpp_type(self, *, strip_ref: bool = False, xla_hack: bool = False) -> str:
         # Do not pass `strip_ref` recursively.
         return f'c10::optional<{self.elem.cpp_type()}>'
 
@@ -135,7 +137,7 @@ class OptionalCType:
 class ListCType:
     elem: 'CType'
 
-    def cpp_type(self, *, strip_ref: bool = False) -> str:
+    def cpp_type(self, *, strip_ref: bool = False, xla_hack: bool = False) -> str:
         # Do not pass `strip_ref` recursively.
         return f'c10::List<{self.elem.cpp_type()}>'
 
@@ -149,7 +151,7 @@ class ListCType:
 class ArrayRefCType:
     elem: 'CType'
 
-    def cpp_type(self, *, strip_ref: bool = False) -> str:
+    def cpp_type(self, *, strip_ref: bool = False, xla_hack: bool = False) -> str:
         # Do not pass `strip_ref` recursively.
         return f'at::ArrayRef<{self.elem.cpp_type()}>'
 
@@ -163,7 +165,7 @@ class ArrayRefCType:
 class VectorCType:
     elem: 'CType'
 
-    def cpp_type(self, *, strip_ref: bool = False) -> str:
+    def cpp_type(self, *, strip_ref: bool = False, xla_hack: bool = False) -> str:
         # Do not pass `strip_ref` recursively.
         return f'std::vector<{self.elem.cpp_type()}>'
 
@@ -178,7 +180,7 @@ class ArrayCType:
     elem: 'CType'
     size: int
 
-    def cpp_type(self, *, strip_ref: bool = False) -> str:
+    def cpp_type(self, *, strip_ref: bool = False, xla_hack: bool = False) -> str:
         # Do not pass `strip_ref` recursively.
         return f'std::array<{self.elem.cpp_type()},{self.size}>'
 
@@ -192,7 +194,7 @@ class ArrayCType:
 class TupleCType:
     elems: List['CType']
 
-    def cpp_type(self, *, strip_ref: bool = False) -> str:
+    def cpp_type(self, *, strip_ref: bool = False, xla_hack: bool = False) -> str:
         # Do not pass `strip_ref` recursively.
         return f'std::tuple<{",".join([e.cpp_type() for e in self.elems])}>'
 
@@ -226,8 +228,8 @@ class NamedCType:
     name: ArgName
     type: CType
 
-    def cpp_type(self, *, strip_ref: bool = False) -> str:
-        return self.type.cpp_type(strip_ref=strip_ref)
+    def cpp_type(self, *, strip_ref: bool = False, xla_hack: bool = False) -> str:
+        return self.type.cpp_type(strip_ref=strip_ref, xla_hack=xla_hack)
 
     # For BC reasons, we don't want to introduce at:: namespaces to RegistrationDeclarations.yaml
     # TODO: Kill this when we eventually remove it!
@@ -258,6 +260,14 @@ class Binding:
     def type(self) -> str:
         return self.nctype.cpp_type()
 
+    def with_name(self, *, name: str) -> 'Binding':
+        return Binding(
+            name=name,
+            nctype=self.nctype.with_name(name=name),
+            default=None,
+            argument=self.argument.with_name(name=name),
+        )
+
     def no_default(self) -> 'Binding':
         return Binding(
             name=self.name,
@@ -266,11 +276,21 @@ class Binding:
             argument=self.argument,
         )
 
-    def decl(self) -> str:
+    def decl(self, *, type_only: bool = False, xla_hack: bool = False) -> str:
         mb_default = ""
         if self.default is not None:
             mb_default = f"={self.default}"
-        return f"{self.type} {self.name}{mb_default}"
+        # TODO: remove byte-for-byte hack
+        if xla_hack:
+            if type_only:
+                return f"{self.nctype.cpp_type(xla_hack=True)}"
+            else:
+                return f"{self.nctype.cpp_type(xla_hack=True)} {self.name}{mb_default}"
+
+        if type_only:
+            return f"{self.type}"
+        else:
+            return f"{self.type} {self.name}{mb_default}"
 
     # For BC reasons, we don't want to introduce at:: namespaces to RegistrationDeclarations.yaml
     # TODO: Kill this when we eventually remove it!
@@ -281,7 +301,10 @@ class Binding:
             mb_default = f"={self.default}"
         return f"{type_s} {self.name}{mb_default}"
 
-    def defn(self) -> str:
+    def defn(self, *, xla_hack: bool = False) -> str:
+        # TODO: remove byte-for-byte hack
+        if xla_hack:
+            return f"{self.nctype.cpp_type(xla_hack=True)} {self.name}"
         return f"{self.type} {self.name}"
 
 # An Expr is a C++ expression.  It has a C++ string representing its syntax,
@@ -407,8 +430,16 @@ class DispatcherSignature:
     def name(self) -> str:
         return dispatcher.name(self.func)
 
+    def decl(self, name: Optional[str] = None, func_ptr_cast: bool = False) -> str:
+        args_str = ', '.join(a.decl(xla_hack=True, type_only=func_ptr_cast) for a in self.arguments())
+        if name is None:
+            name = self.name()
+        if func_ptr_cast:
+            name = "(*)"  # We don't include the name- just the function pointer syntax.
+        return f"{self.returns_type().cpp_type()} {name}({args_str})"
+
     def defn(self, name: Optional[str] = None) -> str:
-        args_str = ', '.join(a.defn() for a in self.arguments())
+        args_str = ', '.join(a.defn(xla_hack=True) for a in self.arguments())
         if name is None:
             name = self.name()
         return f"{self.returns_type().cpp_type()} {name}({args_str})"
@@ -437,6 +468,12 @@ class NativeSignature:
 
     def name(self) -> str:
         return self.prefix + native.name(self.func)
+
+    def decl(self, name: Optional[str] = None) -> str:
+        args_str = ', '.join(a.decl() for a in self.arguments())
+        if name is None:
+            name = self.name()
+        return f"{native.returns_type(self.func.returns).cpp_type()} {name}({args_str})"
 
     def defn(self, name: Optional[str] = None) -> str:
         args_str = ', '.join(a.defn() for a in self.arguments())
