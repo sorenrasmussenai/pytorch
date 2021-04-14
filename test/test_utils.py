@@ -751,9 +751,9 @@ class TestCrashHandler(TestCase):
                     @torch.jit.script
                     def x(i: int):
                         return i + "2"
-                except:
+                except RuntimeError as e:
                     pass
-            
+
             files = os.listdir(temp_dir)
             self.assertEqual(len(files), 1)
             self.assertTrue(files[0].endswith(".dmp"))
