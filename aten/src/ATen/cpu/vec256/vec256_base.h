@@ -627,6 +627,36 @@ inline T minimum(const T& a, const T& b) {
   return c;
 }
 
+// Vectorized version of std::fmax
+template <class T,
+          typename std::enable_if_t<!c10::is_complex<T>::value, int> = 0>
+inline Vec256<T> fmax(const Vec256<T> &a, const Vec256<T> &b) {
+  Vec256<T> c;
+  for (int i = 0; i != Vec256<T>::size(); i++) {
+    c[i] = a[i] > b[i] ? a[i] : b[i];
+    if (_isnan(a[i])) {
+      // If either input is NaN, the result is the other input.
+      c[i] = b[i];
+    }
+  }
+  return c;
+}
+
+// Vectorized version of std::fmin
+template <class T,
+          typename std::enable_if_t<!c10::is_complex<T>::value, int> = 0>
+inline Vec256<T> fmin(const Vec256<T> &a, const Vec256<T> &b) {
+  Vec256<T> c;
+  for (int i = 0; i != Vec256<T>::size(); i++) {
+    c[i] = a[i] < b[i] ? a[i] : b[i];
+    if (_isnan(a[i])) {
+      // If either input is NaN, the result is the other input.
+      c[i] = b[i];
+    }
+  }
+  return c;
+}
+
 template <class T,
           typename std::enable_if<!c10::is_complex<T>::value, int>::type = 0>
 Vec256<T> inline clamp(const Vec256<T> &a, const Vec256<T> &min_vec, const Vec256<T> &max_vec) {
