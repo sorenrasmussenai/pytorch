@@ -922,6 +922,23 @@ class TestAsserts(TestCase):
         torch.testing.assert_close(actual, expected, rtol=0.0, atol=eps * 2)
 
     @onlyCPU
+    def test_assert_close_nan(self, device):
+        a = torch.tensor(float("NaN"), device=device)
+        b = torch.tensor(float("NaN"), device=device)
+
+        for inputs in self.make_inputs(a, b):
+            with self.assertRaises(AssertionError):
+                torch.testing.assert_close(*inputs)
+
+    @onlyCPU
+    def test_assert_close_equal_nan(self, device):
+        a = torch.tensor(float("NaN"), device=device)
+        b = torch.tensor(float("NaN"), device=device)
+
+        for inputs in self.make_inputs(a, b):
+            torch.testing.assert_close(*inputs, equal_nan=True)
+
+    @onlyCPU
     def test_mismatching_values_msg(self, device):
         actual = torch.full((3, 3), 5, dtype=torch.float32, device=device)
         expected = actual.clone()
