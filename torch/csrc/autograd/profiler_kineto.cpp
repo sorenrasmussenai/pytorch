@@ -7,11 +7,7 @@
 #include <stdexcept>
 
 #ifdef USE_KINETO
-#include <pthread.h>
 #include <libkineto.h>
-
-#include <unistd.h>
-#include <sys/syscall.h>
 
 // TODO: TO be removed, once this properly works from libkineto
 // Literal copy-n-paste from third_party/kineto/libkineto/src/WeakSymbols.cpp
@@ -35,15 +31,6 @@ uint64_t next_correlation_id() {
 inline int64_t getTimeUs() {
   using namespace std::chrono;
   return duration_cast<microseconds>(high_resolution_clock::now().time_since_epoch()).count();
-}
-
-// Getting the linux tid is expensive, so cache it.
-// Caching linux pids and tids is not advisable in the general case,
-// but this is only for profiling purposes and we don't need to handle
-// special cases during fork, clone etc.
-pid_t cachedTid() {
-  static thread_local pid_t tid{(pid_t)syscall(SYS_gettid)};
-  return tid;
 }
 
 std::string shapesToStr(const std::vector<std::vector<int64_t>>& shapes);
@@ -71,17 +58,8 @@ struct TORCH_API KinetoThreadLocalState : public ProfilerThreadLocalState {
     //   op.inputDims = shapesToStr(*ctx->shapes);
     // }
 
-    // Not setting atm
-    op.inputTypes = "[]";
-    op.arguments = "[]";
-    op.outputDims = "[]";
-    op.outputTypes = "[]";
-    op.inputNames = "[]";
-    op.outputNames = "[]";
-
-    // setting both pthread and linux tid for Kineto
-    op.sysThreadId = cachedTid();
-    op.pthreadId = pthread_self();
+    libkineto::api().activityProfiler().recordThreadInfo();
+    op.sysThreadId = libkineto::systemThreadId();
 
     {
       std::lock_guard<std::mutex> guard(state_mutex_);
@@ -140,12 +118,11 @@ struct TORCH_API KinetoThreadLocalState : public ProfilerThreadLocalState {
     TORCH_INTERNAL_ASSERT(cpu_trace->activities.size() == kineto_events_.size());
     for (size_t idx = 0; idx < cpu_trace->activities.size(); ++idx) {
       if (kineto_events_[idx].hasShapes()) {
-        cpu_trace->activities[idx].inputDims = shapesToStr(kineto_events_[idx].shapes());
-      } else {
-        cpu_trace->activities[idx].inputDims = "[]";
+        cpu_trace->activities[idx].addMetadata("Input Dims", shapesToStr(kineto_events_[idx].shapes()));
       }
+
       if (kineto_events_[idx].hasStack()) {
-        cpu_trace->activities[idx].callStack = stacksToStr(kineto_events_[idx].stack());
+        cpu_trace->activities[idx].addMetadata("Call stack", stacksToStr(kineto_events_[idx].stack()));
       }
     }
   }
