@@ -5,7 +5,7 @@ import itertools
 import math
 import random
 import re
-from typing import Any, Callable, Iterator, List, Mapping, Sequence, Tuple, Type, TypeVar
+from typing import Any, Callable, Iterator, List, Tuple, Type
 
 import numpy as np
 
@@ -692,9 +692,6 @@ class TestFrameworkUtils(TestCase):
                 self.assertEqual(sorted_tests, sorted_shard_tests)
 
 
-T = TypeVar("T", torch.Tensor, Sequence[torch.Tensor], Mapping[Any, torch.Tensor])
-
-
 class TestAsserts(TestCase):
     def get_assert_fns(self) -> List[Callable]:
         """Gets assert functions to be tested.
@@ -704,16 +701,16 @@ class TestAsserts(TestCase):
         """
         return [torch.testing.assert_equal, torch.testing.assert_close]
 
-    def make_inputs(self, actual: torch.Tensor, expected: torch.Tensor) -> List[Tuple[T, T]]:
-        """Makes inputs for assert functions based on two example tensors.
+    def make_inputs(self, actual: Any, expected: Any) -> List[Tuple[Any, Any]]:
+        """Makes inputs for assert functions based on two examples.
 
         Args:
-            actual (torch.Tensor): Actual tensor.
-            expected (torch.Tensor): Expected tensor.
+            actual (Any): Actual input.
+            expected (Any): Expected input.
 
         Returns:
-            List[Tuple[T, T]]: Pairs of tensors, tensor sequences (:class:`tuple`, :class:`list`), and tensor mappings
-                (:class:`dict`, :class:`~collections.OrderedDict`)
+            List[Tuple[Any, Any]]: Pair of example inputs, as well as the example inputs wrapped in sequences
+            (:class:`tuple`, :class:`list`), and mappings (:class:`dict`, :class:`~collections.OrderedDict`).
         """
         return [
             (actual, expected),
@@ -724,7 +721,7 @@ class TestAsserts(TestCase):
         ]
 
     def assert_fns_with_inputs(self, actual: torch.Tensor, expected: torch.Tensor) -> Iterator[Callable]:
-        """Yields assert functions with with included positional inputs based on two example tensors.
+        """Yields assert functions with with included positional inputs based on two examples.
 
         .. note::
 
@@ -732,8 +729,8 @@ class TestAsserts(TestCase):
             that does not test for anything specific should iterate over this to maximize the coverage.
 
         Args:
-            actual (torch.Tensor): Actual tensor.
-            expected (torch.Tensor): Expected tensor.
+            actual (Any): Actual input.
+            expected (Any): Expected input.
 
         Yields:
             List[Callable]: Assert functions with predefined positional inputs.
@@ -762,15 +759,6 @@ class TestAsserts(TestCase):
                     raise AssertionError(f"'{msg}' does not match regular expression '{expected_regex}'.")
         else:
             raise AssertionError(f"{expected_exception.__name__} was not raised.")
-
-    @onlyCPU
-    def test_not_tensors(self, device):
-        actual = torch.empty((), device=device)
-        expected = np.empty(())
-
-        for fn in self.get_assert_fns():
-            with self.assertRaises(UsageError):
-                fn(actual, expected)
 
     @onlyCPU
     def test_complex_support(self, device):
@@ -956,15 +944,6 @@ class TestAsserts(TestCase):
                 fn()
 
     @onlyCPU
-    def test_unknown_type(self, device):
-        actual = torch.empty((), device=device)
-        expected = {actual.clone()}
-
-        for fn in self.get_assert_fns():
-            with self.assertRaisesRegexs(UsageError, str(type(actual)), str(type(expected))):
-                fn(actual, expected)
-
-    @onlyCPU
     def test_sequence_mismatching_len(self, device):
         actual = (torch.empty((), device=device),)
         expected = ()
@@ -1005,6 +984,33 @@ class TestAsserts(TestCase):
         for fn in self.get_assert_fns():
             with self.assertRaisesRegex(AssertionError, r"key\s+'b'"):
                 fn(actual, expected)
+
+    @onlyCPU
+    def test_unknown_type(self, device):
+        actual = torch.empty((), device=device)
+        expected = {actual.clone()}
+
+        for fn in self.get_assert_fns():
+            with self.assertRaisesRegexs(UsageError, str(type(actual)), str(type(expected))):
+                fn(actual, expected)
+
+    @onlyCPU
+    def test_scalars(self, device):
+        number = 1
+        array = np.array(number, dtype=np.int32)
+        tensor = torch.tensor(number, dtype=torch.int32, device=device)
+
+        for actual, expected in itertools.permutations((number, array, tensor), 2):
+            for fn in self.assert_fns_with_inputs(actual, expected):
+                fn()
+
+    @onlyCPU
+    def test_numpy(self, device):
+        actual = torch.rand(2, 2, device=device)
+        expected = actual.clone().numpy()
+
+        for fn in self.assert_fns_with_inputs(actual, expected):
+            fn()
 
 
 instantiate_device_type_tests(TestAsserts, globals())
