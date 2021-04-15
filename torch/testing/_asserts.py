@@ -2,8 +2,8 @@ import collections.abc
 import contextlib
 import functools
 import sys
-from collections import namedtuple
-from typing import Any, Callable, Mapping, Optional, Sequence, Tuple, Type, TypeVar
+from types import SimpleNamespace
+from typing import Any, Callable, Mapping, Optional, Sequence, Tuple, Type, TypeVar, Union
 
 import torch
 from torch import Tensor
@@ -157,22 +157,8 @@ def _equalize_attributes(actual: Tensor, expected: Tensor) -> Tuple[Tensor, Tens
     return actual, expected
 
 
-_Trace = namedtuple(
-    "_Trace",
-    (
-        "total_elements",
-        "total_mismatches",
-        "mismatch_ratio",
-        "max_abs_diff",
-        "max_abs_diff_idx",
-        "max_rel_diff",
-        "max_rel_diff_idx",
-    ),
-)
-
-
-def _trace_mismatches(actual: Tensor, expected: Tensor, mismatches: Tensor) -> _Trace:
-    """Traces mismatches.
+def _trace_mismatches(actual: Tensor, expected: Tensor, mismatches: Tensor) -> SimpleNamespace:
+    """Traces mismatches and returns diagnostics.
 
     Args:
         actual (Tensor): Actual tensor.
@@ -181,7 +167,7 @@ def _trace_mismatches(actual: Tensor, expected: Tensor, mismatches: Tensor) -> _
             the location of mismatches.
 
     Returns:
-        (NamedTuple): Mismatch diagnostics with the following fields:
+        (SimpleNamespace): Mismatch diagnostics with the following attributes:
 
             - total_elements (int): Total number of values.
             - total_mismatches (int): Total number of mismatches.
@@ -208,7 +194,7 @@ def _trace_mismatches(actual: Tensor, expected: Tensor, mismatches: Tensor) -> _
     rel_diff = abs_diff / torch.abs(b_flat)
     max_rel_diff, max_rel_diff_flat_idx = torch.max(rel_diff, 0)
 
-    return _Trace(
+    return SimpleNamespace(
         total_elements=total_elements,
         total_mismatches=total_mismatches,
         mismatch_ratio=mismatch_ratio,
@@ -219,12 +205,19 @@ def _trace_mismatches(actual: Tensor, expected: Tensor, mismatches: Tensor) -> _
     )
 
 
-def _check_values_equal(actual: Tensor, expected: Tensor) -> Optional[AssertionError]:
+def _check_values_equal(
+    actual: Tensor,
+    expected: Tensor,
+    *,
+    msg: Optional[Union[str, Callable[[Any, Any, SimpleNamespace], str]]] = None,
+) -> Optional[AssertionError]:
     """Checks if the values of two tensors are bitwise equal.
 
     Args:
         actual (Tensor): Actual tensor.
         expected (Tensor): Expected tensor.
+        msg (Optional[Union[str, Callable[[Any, Any, SimpleNamespace], str]]]): Optional error message. Can be passed
+            as callable in which case it will be called with the inputs and the result of :func:`_trace_mismatches`.
 
     Returns:
         (Optional[AssertionError]): If check did not pass.
@@ -234,12 +227,17 @@ def _check_values_equal(actual: Tensor, expected: Tensor) -> Optional[AssertionE
         return None
 
     trace = _trace_mismatches(actual, expected, mismatches)
-    return AssertionError(
-        f"Tensors are not equal!\n\n"
-        f"Mismatched elements: {trace.total_mismatches} / {trace.total_elements} ({trace.mismatch_ratio:.1%})\n"
-        f"Greatest absolute difference: {trace.max_abs_diff} at {trace.max_abs_diff_idx}\n"
-        f"Greatest relative difference: {trace.max_rel_diff} at {trace.max_rel_diff_idx}"
-    )
+
+    if msg is None:
+        msg = (
+            f"Tensors are not equal!\n\n"
+            f"Mismatched elements: {trace.total_mismatches} / {trace.total_elements} ({trace.mismatch_ratio:.1%})\n"
+            f"Greatest absolute difference: {trace.max_abs_diff} at {trace.max_abs_diff_idx}\n"
+            f"Greatest relative difference: {trace.max_rel_diff} at {trace.max_rel_diff_idx}"
+        )
+    elif callable(msg):
+        msg = msg(actual, expected, trace)
+    return AssertionError(msg)
 
 
 def _check_values_close(
@@ -249,6 +247,7 @@ def _check_values_close(
     rtol: float,
     atol: float,
     equal_nan: bool,
+    msg: Optional[Union[str, Callable[[Any, Any, SimpleNamespace], str]]],
 ) -> Optional[AssertionError]:
     """Checks if the values of two tensors are close up to a desired tolerance.
 
@@ -258,6 +257,8 @@ def _check_values_close(
         rtol (float): Relative tolerance.
         atol (float): Absolute tolerance.
         equal_nan (bool): If ``True``, two ``NaN`` values will be considered equal.
+        msg (Optional[Union[str, Callable[[Any, Any, SimpleNamespace], str]]]): Optional error message. Can be passed
+            as callable in which case it will be called with the inputs and the result of :func:`_trace_mismatches`.
 
     Returns:
         (Optional[AssertionError]): If check did not pass.
@@ -268,12 +269,16 @@ def _check_values_close(
         return None
 
     trace = _trace_mismatches(actual, expected, mismatches)
-    return AssertionError(
-        f"Tensors are not close!\n\n"
-        f"Mismatched elements: {trace.total_mismatches} / {trace.total_elements} ({trace.mismatch_ratio:.1%})\n"
-        f"Greatest absolute difference: {trace.max_abs_diff} at {trace.max_abs_diff_idx} (up to {atol} allowed)\n"
-        f"Greatest relative difference: {trace.max_rel_diff} at {trace.max_rel_diff_idx} (up to {rtol} allowed)"
-    )
+    if msg is None:
+        msg = (
+            f"Tensors are not close!\n\n"
+            f"Mismatched elements: {trace.total_mismatches} / {trace.total_elements} ({trace.mismatch_ratio:.1%})\n"
+            f"Greatest absolute difference: {trace.max_abs_diff} at {trace.max_abs_diff_idx} (up to {atol} allowed)\n"
+            f"Greatest relative difference: {trace.max_rel_diff} at {trace.max_rel_diff_idx} (up to {rtol} allowed)"
+        )
+    elif callable(msg):
+        msg = msg(actual, expected, trace)
+    return AssertionError(msg)
 
 
 def _check_tensors_equal(
@@ -283,6 +288,7 @@ def _check_tensors_equal(
     check_device: bool = True,
     check_dtype: bool = True,
     check_stride: bool = True,
+    msg: Optional[Union[str, Callable[[Any, Any, SimpleNamespace], str]]] = None,
 ) -> Optional[Exception]:
     """Checks that the values of two tensors are bitwise equal.
 
@@ -304,7 +310,7 @@ def _check_tensors_equal(
         return exc
     actual, expected = _equalize_attributes(actual, expected)
 
-    exc = _check_values_equal(actual, expected)
+    exc = _check_values_equal(actual, expected, msg=msg)
     if exc:
         return exc
 
@@ -321,6 +327,7 @@ def _check_tensors_close(
     check_device: bool = True,
     check_dtype: bool = True,
     check_stride: bool = True,
+    msg: Optional[Union[str, Callable[[Any, Any, SimpleNamespace], str]]] = None,
 ) -> Optional[Exception]:
     r"""Checks that the values of two tensors are close.
 
@@ -361,9 +368,9 @@ def _check_tensors_close(
     actual, expected = _equalize_attributes(actual, expected)
 
     if (rtol == 0.0) and (atol == 0.0):
-        exc = _check_values_equal(actual, expected)
+        exc = _check_values_equal(actual, expected, msg=msg)
     else:
-        exc = _check_values_close(actual, expected, rtol=rtol, atol=atol, equal_nan=equal_nan)
+        exc = _check_values_close(actual, expected, rtol=rtol, atol=atol, equal_nan=equal_nan, msg=msg)
     if exc:
         return exc
 
@@ -535,6 +542,7 @@ def assert_equal(
     check_device: bool = True,
     check_dtype: bool = True,
     check_stride: bool = True,
+    msg: Optional[Union[str, Callable[[Any, Any, SimpleNamespace], str]]] = None,
 ) -> None:
     """Asserts that the values of tensors are bitwise equal.
 
@@ -553,6 +561,9 @@ def assert_equal(
             this check is disabled they do not have the same :attr:`~torch.Tensor.dtype`, they are copied to the
             :class:`~torch.dtype` returned by :func:`torch.promote_types` before their values are compared.
         check_stride (bool): If ``True`` (default), asserts that the tensors have the same stride.
+        msg (Optional[Union[str, Callable[[Any, Any, SimpleNamespace], str]]]): Optional error message to use if the
+            values of tensors mismatch. Can be passed as callable in which case it will be called with the tensors and
+            a namespace of diagnostic info about the mismatches. See below for details.
 
     Raises:
         UsageError: If the input pair has an unsupported type.
@@ -568,6 +579,18 @@ def assert_equal(
         AssertionError: If the inputs are :class:`~collections.abc.Sequence`'s, but their length does not match.
         AssertionError: If the inputs are :class:`~collections.abc.Mapping`'s, but their set of keys mismatch.
 
+    The namespace that will be passed to :attr:`msg` if its a callable comprises the following attributes:
+
+    - total_elements (int): Total number of values.
+    - total_mismatches (int): Total number of mismatches.
+    - mismatch_ratio (float): Quotient of total mismatches and total elements.
+    - max_abs_diff (Union[int, float]): Greatest absolute difference of the inputs.
+    - max_abs_diff_idx (Union[int, Tuple[int, ...]]): Index of greatest absolute difference.
+    - max_rel_diff (Union[int, float]): Greatest relative difference of the inputs.
+    - max_rel_diff_idx (Union[int, Tuple[int, ...]]): Index of greatest relative difference.
+
+    For ``max_abs_diff`` and ``max_rel_diff`` the type depends on the :attr:`~torch.Tensor.dtype` of the inputs.
+
     .. seealso::
 
         To assert that the values in tensors are close but are not required to be bitwise equal, use
@@ -578,6 +601,7 @@ def assert_equal(
         check_device=check_device,
         check_dtype=check_dtype,
         check_stride=check_stride,
+        msg=msg,
     )
     exc = _check_by_type(actual, expected, check_tensors)
     if exc:
@@ -594,6 +618,7 @@ def assert_close(
     check_device: bool = True,
     check_dtype: bool = True,
     check_stride: bool = True,
+    msg: Optional[Union[str, Callable[[Any, Any, SimpleNamespace], str]]] = None,
 ) -> None:
     r"""Asserts that the values of tensors are close.
 
@@ -629,6 +654,9 @@ def assert_close(
             :func:`torch.promote_types` before their values are compared.
         check_stride (bool): If ``True`` (default), asserts that both :attr:`actual` and :attr:`expected` have the same
             stride.
+        msg (Optional[Union[str, Callable[[Any, Any, SimpleNamespace], str]]]): Optional error message to use if the
+            values of tensors mismatch. Can be passed as callable in which case it will be called with the tensors and
+            a namespace of diagnostic info about the mismatches. See below for details.
 
     Raises:
         UsageError: If the input pair has an unsupported type.
@@ -667,6 +695,18 @@ def assert_close(
     | other                     | ``0.0``    | ``0.0``  |
     +---------------------------+------------+----------+
 
+    The namespace that will be passed to :attr:`msg` if its a callable comprises the following attributes:
+
+    - total_elements (int): Total number of values.
+    - total_mismatches (int): Total number of mismatches.
+    - mismatch_ratio (float): Quotient of total mismatches and total elements.
+    - max_abs_diff (Union[int, float]): Greatest absolute difference of the inputs.
+    - max_abs_diff_idx (Union[int, Tuple[int, ...]]): Index of greatest absolute difference.
+    - max_rel_diff (Union[int, float]): Greatest relative difference of the inputs.
+    - max_rel_diff_idx (Union[int, Tuple[int, ...]]): Index of greatest relative difference.
+
+    For ``max_abs_diff`` and ``max_rel_diff`` the type depends on the :attr:`~torch.Tensor.dtype` of the inputs.
+
     .. seealso::
 
         To assert that the values in tensors are bitwise equal, use :func:`assert_equal` instead.
@@ -679,6 +719,7 @@ def assert_close(
         check_device=check_device,
         check_dtype=check_dtype,
         check_stride=check_stride,
+        msg=msg,
     )
     exc = _check_by_type(actual, expected, check_tensors)
     if exc:
